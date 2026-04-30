@@ -13,6 +13,15 @@ acquire_lock() {
   local lf
   lf="$(lock_file_for "$target")"
   if [[ -f "$lf" ]]; then
+    local now created ttl
+    now="$(date +%s)"
+    created="$(cat "$lf" 2>/dev/null || echo 0)"
+    ttl="${RR_LOCK_TTL_SECONDS:-1800}"
+    if [[ "$created" =~ ^[0-9]+$ ]] && (( now - created > ttl )); then
+      rm -f "$lf"
+    fi
+  fi
+  if [[ -f "$lf" ]]; then
     echo "lock exists: $lf" >&2
     return 1
   fi

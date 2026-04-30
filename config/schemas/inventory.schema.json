@@ -1,1 +1,34 @@
-{"type":"object","required":["hosts"],"properties":{"hosts":{"type":"object"}},"additionalProperties":true}
+{
+  "type": "object",
+  "required": ["hosts"],
+  "properties": {
+    "hosts": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["type", "provider", "location", "role", "index", "ssh_alias", "vars"],
+        "not": {
+          "anyOf": [
+            {"required": ["ip"]},
+            {"required": ["host"]},
+            {"required": ["hostname"]},
+            {"required": ["password"]},
+            {"required": ["token"]},
+            {"required": ["private_key"]}
+          ]
+        },
+        "properties": {
+          "type": {"enum": ["cloud", "lan"]},
+          "provider": {"type": "string"},
+          "location": {"type": "string"},
+          "role": {"type": "string"},
+          "index": {"type": "string"},
+          "ssh_alias": {"type": "string", "minLength": 1},
+          "labels": {"type": "array", "items": {"type": "string"}},
+          "vars": {"type": "object"}
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

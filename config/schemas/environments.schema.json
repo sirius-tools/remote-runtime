@@ -1,1 +1,21 @@
-{"type":"object","required":["environments"],"properties":{"environments":{"type":"object"}},"additionalProperties":true}
+{
+  "type": "object",
+  "required": ["environments"],
+  "properties": {
+    "environments": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["protected", "strategy", "hosts"],
+        "properties": {
+          "description": {"type": "string"},
+          "protected": {"type": "boolean"},
+          "strategy": {"enum": ["serial", "rolling", "parallel"]},
+          "hosts": {"type": "array", "items": {"type": "string"}},
+          "vars": {"type": "object"}
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

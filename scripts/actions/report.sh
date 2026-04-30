@@ -4,10 +4,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/../lib/common_actions.sh"
 
 action_report() {
   local target="$1" dry_run="${2:-true}"
-  local hosts h
-  hosts="$(resolve_or_fail "$target")"
-  while IFS= read -r h; do
-    [[ -z "$h" ]] && continue
-    ssh_exec "$h" "echo action report on $h" "$dry_run" | mask_output
-  done <<< "$hosts"
+  local hosts
+  hosts="$(resolve_or_fail "$target" | paste -sd ',' -)"
+  write_report "report" "$target" "dry_run: $dry_run
+hosts: $hosts" >/dev/null
+  echo "report generated for $target"
 }

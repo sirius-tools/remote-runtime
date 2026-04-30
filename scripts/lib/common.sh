@@ -2,9 +2,9 @@
 set -euo pipefail
 
 RR_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-RR_HOME="${HOME}/.remote-runtime"
-RR_PROJECT_DIR="$(pwd)/.remote-runtime"
-RR_USER_CFG_DIR="${HOME}/.config/remote-runtime"
+RR_HOME="${RR_HOME:-$HOME/.remote-runtime}"
+RR_PROJECT_DIR="${RR_PROJECT_DIR:-$(pwd)/.remote-runtime}"
+RR_USER_CFG_DIR="${RR_USER_CFG_DIR:-$HOME/.config/remote-runtime}"
 
 mkdir -p "$RR_HOME" "$RR_HOME/audit" "$RR_HOME/reports" "$RR_HOME/locks"
 

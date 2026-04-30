@@ -1,1 +1,19 @@
-{"type":"object","required":["tasks"],"properties":{"tasks":{"type":"object"}},"additionalProperties":true}
+{
+  "type": "object",
+  "required": ["tasks"],
+  "properties": {
+    "tasks": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["description", "risk", "steps"],
+        "properties": {
+          "description": {"type": "string"},
+          "risk": {"enum": ["low", "medium", "high"]},
+          "steps": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

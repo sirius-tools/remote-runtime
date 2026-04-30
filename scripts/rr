@@ -38,6 +38,10 @@ source "$ROOT/scripts/actions/package.sh"
 source "$ROOT/scripts/actions/backup.sh"
 source "$ROOT/scripts/actions/upload.sh"
 source "$ROOT/scripts/actions/switch_release.sh"
+source "$ROOT/scripts/actions/cleanup.sh"
+source "$ROOT/scripts/actions/db-check.sh"
+source "$ROOT/scripts/actions/logs_collect.sh"
+source "$ROOT/scripts/actions/report.sh"
 
 DRY_RUN=false
 YES=false
@@ -77,6 +81,11 @@ rr status <target>
 rr restart <target>
 rr metrics <target>
 rr sync <target>
+rr cleanup <target>
+rr backup <target>
+rr port-check <target>
+rr db-check <target>
+rr smoke-test <target>
 rr rollback <target>
 rr diagnose <target>
 rr exec <target> "<command>"
@@ -321,6 +330,57 @@ parse_flags() {
   CMD_ARGS=("$@")
 }
 
+hosts_json_for_target() {
+  local target="$1"
+  local hosts h out=""
+  hosts="$(resolve_or_fail "$target")" || return $?
+  while IFS= read -r h; do
+    [[ -z "$h" ]] && continue
+    out+="\"$(json_escape "$h")\","
+  done <<< "$hosts"
+  printf '%s' "${out%,}"
+}
+
+current_millis() {
+  printf '%s000' "$(date +%s)"
+}
+
+run_managed_action() {
+  local action="$1" target="$2" fn="$3"
+  shift 3
+  local start end duration hosts_json rc success
+  start="$(current_millis)"
+
+  enforce_action_policy "$action" "$target" "$DRY_RUN" "$YES"
+
+  set +e
+  hosts_json="$(hosts_json_for_target "$target")"
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    end="$(current_millis)"
+    duration=$((end - start))
+    write_audit "$action" "$target" "" "$DRY_RUN" false "$duration"
+    return "$rc"
+  fi
+
+  set +e
+  "$fn" "$@"
+  rc=$?
+  set -e
+
+  end="$(current_millis)"
+  duration=$((end - start))
+  [[ "$rc" -eq 0 ]] && success=true || success=false
+  write_audit "$action" "$target" "$hosts_json" "$DRY_RUN" "$success" "$duration"
+  if [[ "$REPORT" == "true" ]]; then
+    write_report "$action" "$target" "success: $success
+duration_ms: $duration
+hosts: [$hosts_json]" >/dev/null
+  fi
+  return "$rc"
+}
+
 doctor() {
   local ok=true
   for c in yq ssh scp rsync curl bash; do
@@ -337,6 +397,10 @@ doctor() {
     workdir="$(yq eval ".hosts.\"$h\".vars.workdir" "$CFG_DIR/inventory.yaml")"
     health="$(yq eval ".hosts.\"$h\".vars.health_url" "$CFG_DIR/inventory.yaml")"
     [[ "$alias" == "null" || -z "$alias" ]] && { echo "missing ssh_alias for $h"; ok=false; }
+    if [[ "$alias" != "null" && -n "$alias" ]] && ! ssh -G "$alias" >/dev/null 2>&1; then
+      echo "ssh_alias not resolvable for $h: $alias"
+      ok=false
+    fi
     [[ "$workdir" == "null" || -z "$workdir" ]] && { echo "missing workdir for $h"; ok=false; }
     [[ "$health" == "null" || -z "$health" ]] && { echo "missing health_url for $h"; ok=false; }
   done < <(yq eval '.hosts | keys | .[]' "$CFG_DIR/inventory.yaml")
@@ -345,7 +409,7 @@ doctor() {
 
 do_init() {
   mkdir -p .remote-runtime
-  local svc="${SERVICE_NAME:-myapp}" dep="${DEPLOY_METHOD:-jar-systemd}" cloud="${CLOUD_ALIAS:-jdcloud}" lan="${LAN_ALIAS:-intranet}" health="${HEALTH_URL:-http://127.0.0.1:8080/actuator/health}" wd="${WORKDIR:-/opt/apps/myapp}"
+  local svc="${SERVICE_NAME:-myapp}" dep="${DEPLOY_METHOD:-jar-systemd}" cloud="${CLOUD_ALIAS:-jdcloud}" lan="${LAN_ALIAS:-intranet}" health="${HEALTH_URL:-http://127.0.0.1:8080/actuator/health}" wd="${WORKDIR:-/opt/apps/myapp}" artifact_dir="${ARTIFACT_DIR:-target}" artifact_pattern="${ARTIFACT_PATTERN:-*.jar}" is_java="${IS_JAVA:-true}"
   cat > .remote-runtime/inventory.yaml <<Y
 hosts:
   cloud-jd-bj-app-01:
@@ -361,6 +425,13 @@ hosts:
       deploy_method: $dep
       health_url: $health
       workdir: $wd
+      artifact_dir: $artifact_dir
+      artifact_pattern: "$artifact_pattern"
+      keep_releases: 5
+      release_root: $wd/releases
+      shared_dir: $wd/shared
+      logs_dir: $wd/logs
+      is_java: $is_java
   lan-office-local-app-01:
     type: lan
     provider: office
@@ -374,6 +445,13 @@ hosts:
       deploy_method: $dep
       health_url: $health
       workdir: $wd
+      artifact_dir: $artifact_dir
+      artifact_pattern: "$artifact_pattern"
+      keep_releases: 5
+      release_root: $wd/releases
+      shared_dir: $wd/shared
+      logs_dir: $wd/logs
+      is_java: $is_java
 Y
   cp "$ROOT/config/environments.yaml" .remote-runtime/environments.yaml
   cp "$ROOT/config/tasks.yaml" .remote-runtime/tasks.yaml
@@ -384,6 +462,11 @@ Y
 run_task() {
   local task="$1" target="$2"
   build_compiled_configs >/dev/null
+  local risk
+  risk="$(yq eval ".tasks.\"$task\".risk" "$CFG_DIR/tasks.yaml" 2>/dev/null || true)"
+  if [[ "$risk" == "high" || "$risk" == "medium" ]]; then
+    enforce_action_policy "$task" "$target" "$DRY_RUN" "$YES"
+  fi
   local step
   while IFS= read -r step; do
     [[ -z "$step" ]] && continue
@@ -400,6 +483,8 @@ run_task() {
       build) action_build "$target" "$DRY_RUN" ;;
       package) action_package "$target" "$DRY_RUN" ;;
       backup) action_backup "$target" "$DRY_RUN" ;;
+      cleanup) action_cleanup "$target" "$DRY_RUN" ;;
+      db-check) action_db_check "$target" "$DRY_RUN" ;;
       upload) action_upload "$target" "$DRY_RUN" ;;
       switch_release) action_switch_release "$target" "$DRY_RUN" ;;
       *) echo "skip unknown step: $step" ;;
@@ -428,6 +513,10 @@ case "$cmd" in
           --lan-alias) LAN_ALIAS="$2"; shift ;;
           --health-url) HEALTH_URL="$2"; shift ;;
           --workdir) WORKDIR="$2"; shift ;;
+          --artifact-dir) ARTIFACT_DIR="$2"; shift ;;
+          --artifact-pattern) ARTIFACT_PATTERN="$2"; shift ;;
+          --java) IS_JAVA=true ;;
+          --no-java) IS_JAVA=false ;;
         esac
         shift
       done
@@ -435,6 +524,9 @@ case "$cmd" in
     else
       read -r -p "service_name [myapp]: " SERVICE_NAME; SERVICE_NAME="${SERVICE_NAME:-myapp}"
       read -r -p "deploy_method [jar-systemd]: " DEPLOY_METHOD; DEPLOY_METHOD="${DEPLOY_METHOD:-jar-systemd}"
+      read -r -p "is_java [true]: " IS_JAVA; IS_JAVA="${IS_JAVA:-true}"
+      read -r -p "artifact_dir [target]: " ARTIFACT_DIR; ARTIFACT_DIR="${ARTIFACT_DIR:-target}"
+      read -r -p "artifact_pattern [*.jar]: " ARTIFACT_PATTERN; ARTIFACT_PATTERN="${ARTIFACT_PATTERN:-*.jar}"
       read -r -p "cloud_alias [jdcloud]: " CLOUD_ALIAS; CLOUD_ALIAS="${CLOUD_ALIAS:-jdcloud}"
       read -r -p "lan_alias [intranet]: " LAN_ALIAS; LAN_ALIAS="${LAN_ALIAS:-intranet}"
       read -r -p "health_url [http://127.0.0.1:8080/actuator/health]: " HEALTH_URL; HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8080/actuator/health}"
@@ -473,18 +565,34 @@ case "$cmd" in
     echo "2) check policy"
     echo "3) execute action"
     ;;
-  health) action_health "${2:-}" "$DRY_RUN" "$JSON" "$TIMEOUT" ;;
-  deploy) action_deploy "${2:-}" "$DRY_RUN" ;;
-  logs) action_logs "${2:-}" "$DRY_RUN" "$TAIL" "$FOLLOW" ;;
-  status) action_status "${2:-}" "$DRY_RUN" ;;
-  restart) action_restart "${2:-}" "$DRY_RUN" ;;
-  metrics) action_metrics "${2:-}" "$DRY_RUN" ;;
-  sync) action_sync "${2:-}" "$DRY_RUN" ;;
-  rollback) action_rollback "${2:-}" "$DRY_RUN" ;;
-  diagnose) action_diagnose "${2:-}" "$DRY_RUN" ;;
-  exec) action_exec "${2:-}" "$DRY_RUN" "${3:-}" ;;
-  run) run_task "${2:-}" "${3:-}" ;;
-  compare) action_compare "${2:-}" "${3:-}" "$DRY_RUN" ;;
+  health) run_managed_action health "${2:-}" action_health "${2:-}" "$DRY_RUN" "$JSON" "$TIMEOUT" ;;
+  deploy) run_managed_action deploy "${2:-}" action_deploy "${2:-}" "$DRY_RUN" ;;
+  logs) run_managed_action logs "${2:-}" action_logs "${2:-}" "$DRY_RUN" "$TAIL" "$FOLLOW" ;;
+  status) run_managed_action status "${2:-}" action_status "${2:-}" "$DRY_RUN" ;;
+  restart) run_managed_action restart "${2:-}" action_restart "${2:-}" "$DRY_RUN" ;;
+  metrics) run_managed_action metrics "${2:-}" action_metrics "${2:-}" "$DRY_RUN" ;;
+  sync) run_managed_action sync "${2:-}" action_sync "${2:-}" "$DRY_RUN" ;;
+  cleanup) run_managed_action cleanup "${2:-}" action_cleanup "${2:-}" "$DRY_RUN" ;;
+  backup) run_managed_action backup "${2:-}" action_backup "${2:-}" "$DRY_RUN" ;;
+  port-check) run_managed_action port-check "${2:-}" action_port_check "${2:-}" "$DRY_RUN" ;;
+  db-check) run_managed_action db-check "${2:-}" action_db_check "${2:-}" "$DRY_RUN" ;;
+  smoke-test) run_managed_action smoke-test "${2:-}" action_smoke_test "${2:-}" "$DRY_RUN" ;;
+  rollback) run_managed_action rollback "${2:-}" action_rollback "${2:-}" "$DRY_RUN" ;;
+  diagnose) run_managed_action diagnose "${2:-}" action_diagnose "${2:-}" "$DRY_RUN" ;;
+  exec) run_managed_action exec "${2:-}" action_exec "${2:-}" "$DRY_RUN" "${3:-}" "$JSON" ;;
+  run) run_managed_action run "${3:-}" run_task "${2:-}" "${3:-}" ;;
+  compare)
+    start="$(current_millis)"
+    set +e
+    action_compare "${2:-}" "${3:-}" "$DRY_RUN"
+    rc=$?
+    set -e
+    end="$(current_millis)"
+    [[ "$rc" -eq 0 ]] && success=true || success=false
+    write_audit "compare" "${2:-},${3:-}" "\"$(json_escape "${2:-}")\",\"$(json_escape "${3:-}")\"" "$DRY_RUN" "$success" "$((end - start))"
+    [[ "$REPORT" == "true" ]] && write_report "compare" "${2:-}_${3:-}" "success: $success" >/dev/null
+    exit "$rc"
+    ;;
   lock)
     case "${2:-}" in
       list) lock_list ;;

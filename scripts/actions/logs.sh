@@ -9,15 +9,8 @@ action_logs() {
   hosts="$(resolve_or_fail "$target")"
   while IFS= read -r h; do
     [[ -z "$h" ]] && continue
-    local method svc wd cmd
-    method="$(host_var "$h" deploy_method)"
-    svc="$(host_var "$h" service_name)"
-    wd="$(host_var "$h" workdir)"
-    if [[ "$method" == "jar-systemd" ]]; then
-      cmd="journalctl -u $svc -n $tail --no-pager"
-    else
-      cmd="cd $wd/current && docker compose logs --tail $tail"
-    fi
+    local cmd
+    cmd="$(deploy_method_command "$h" logs_command "$tail")"
     [[ "$follow" == "true" ]] && cmd+=" -f"
     ssh_exec "$h" "$cmd" "$dry_run" | mask_output
   done <<< "$hosts"

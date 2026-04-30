@@ -8,6 +8,6 @@ action_port_check() {
   hosts="$(resolve_or_fail "$target")"
   while IFS= read -r h; do
     [[ -z "$h" ]] && continue
-    ssh_exec "$h" "echo action port-check on $h" "$dry_run" | mask_output
+    ssh_exec "$h" "ss -lnt || netstat -lnt" "$dry_run" | mask_output
   done <<< "$hosts"
 }

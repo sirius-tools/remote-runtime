@@ -13,10 +13,6 @@ action_status() {
     method="$(host_var "$h" deploy_method)"
     svc="$(host_var "$h" service_name)"
     wd="$(host_var "$h" workdir)"
-    if [[ "$method" == "jar-systemd" ]]; then
-      ssh_exec "$h" "systemctl status $svc --no-pager | head -n 20" "$dry_run" | mask_output
-    else
-      ssh_exec "$h" "cd $wd/current && docker compose ps" "$dry_run" | mask_output
-    fi
+    ssh_exec "$h" "$(deploy_method_command "$h" status_command) ; readlink $wd/current 2>/dev/null || true ; readlink $wd/previous 2>/dev/null || true" "$dry_run" | mask_output
   done <<< "$hosts"
 }

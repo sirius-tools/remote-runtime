@@ -49,26 +49,7 @@ Natural language server onboarding:
 4. Never store passwords, tokens, or private keys.
 5. If the user provides a password, state that it will not be saved and use terminal SSH key bootstrap instead.
 6. Write server connection details only to local SSH config, and write remote-runtime inventory with `ssh_alias` only.
-
-Example mapping:
-
-User says: `IP:<address> user:<ssh-user> password:*** 帮我配置成本地测试环境`
-
-Codex should infer:
-
-- env: `test`
-- host name: `lan-home-local-test-01`
-- ssh alias: `lan-home-local-test-01`
-- host address: the provided address, used only in local SSH config
-- user: the provided SSH user
-- role: `test`
-
-Then run:
-
-```bash
-bash ~/.agents/skills/remote-runtime/scripts/rr host plan-add --env test --name lan-home-local-test-01 --ssh-alias lan-home-local-test-01 --host <address> --user <user> --role test --provider home --location local
-bash ~/.agents/skills/remote-runtime/scripts/rr host add --env test --name lan-home-local-test-01 --ssh-alias lan-home-local-test-01 --host <address> --user <user> --role test --provider home --location local
-```
+For details, read `references/onboarding-hosts.md`.
 
 Never expose:
 

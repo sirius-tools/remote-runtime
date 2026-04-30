@@ -4,10 +4,13 @@ source "$(dirname "${BASH_SOURCE[0]}")/../lib/common_actions.sh"
 
 action_smoke_test() {
   local target="$1" dry_run="${2:-true}"
+  build_compiled_configs >/dev/null
   local hosts h
   hosts="$(resolve_or_fail "$target")"
   while IFS= read -r h; do
     [[ -z "$h" ]] && continue
-    ssh_exec "$h" "echo action smoke-test on $h" "$dry_run" | mask_output
+    local url
+    url="$(host_var "$h" health_url)"
+    ssh_exec "$h" "curl -fsS '$url' >/tmp/rr-smoke.out && head -c 500 /tmp/rr-smoke.out" "$dry_run" | mask_output
   done <<< "$hosts"
 }

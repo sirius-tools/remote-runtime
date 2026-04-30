@@ -8,6 +8,6 @@ action_db_check() {
   hosts="$(resolve_or_fail "$target")"
   while IFS= read -r h; do
     [[ -z "$h" ]] && continue
-    ssh_exec "$h" "echo action db-check on $h" "$dry_run" | mask_output
+    ssh_exec "$h" "command -v pg_isready >/dev/null && pg_isready || command -v mysqladmin >/dev/null && mysqladmin ping || echo 'no db health tool found'" "$dry_run" | mask_output
   done <<< "$hosts"
 }
