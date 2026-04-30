@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SKILL_HOME="${CODEX_HOME:-$HOME/.codex}/skills"
+SKILL_HOME="${AGENTS_HOME:-$HOME/.agents}/skills"
 TARGET_SKILL_DIR="$SKILL_HOME/remote-runtime"
 
 rm -rf "$TARGET_SKILL_DIR"

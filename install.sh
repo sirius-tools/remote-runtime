@@ -11,7 +11,7 @@ for c in bash ssh scp rsync curl yq rsync; do
   command -v "$c" >/dev/null 2>&1 || { echo "missing: $c"; exit 1; }
 done
 
-SKILL_HOME="${CODEX_HOME:-$HOME/.codex}/skills"
+SKILL_HOME="${AGENTS_HOME:-$HOME/.agents}/skills"
 TARGET_SKILL_DIR="$SKILL_HOME/remote-runtime"
 
 mkdir -p "$SKILL_HOME"

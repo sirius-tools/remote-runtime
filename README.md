@@ -19,21 +19,21 @@ npx @smithery/cli@latest skill add sirius-tools/remote-runtime -a codex -g
 ./install.sh
 ```
 
-- 默认安装到 `~/.codex/skills/remote-runtime`
+- 默认安装到 `~/.agents/skills/remote-runtime`
 - 可选 `./install.sh --with-cli` 创建 `~/.local/bin/rr`
 
 ## 快速开始
 ```bash
-~/.codex/skills/remote-runtime/scripts/rr doctor
-~/.codex/skills/remote-runtime/scripts/rr init --non-interactive \
+~/.agents/skills/remote-runtime/scripts/rr doctor
+~/.agents/skills/remote-runtime/scripts/rr init --non-interactive \
   --service-name myapp \
   --deploy-method jar-systemd \
   --cloud-alias jdcloud \
   --lan-alias intranet \
   --health-url http://127.0.0.1:8080/actuator/health \
   --workdir /opt/apps/myapp
-~/.codex/skills/remote-runtime/scripts/rr validate
-~/.codex/skills/remote-runtime/scripts/rr health env:test --dry-run
+~/.agents/skills/remote-runtime/scripts/rr validate
+~/.agents/skills/remote-runtime/scripts/rr health env:test --dry-run
 ```
 
 ## 适用场景
