@@ -24,16 +24,16 @@ npx @smithery/cli@latest skill add sirius-tools/remote-runtime -a codex -g
 
 ## 快速开始
 ```bash
-~/.agents/skills/remote-runtime/scripts/rr doctor
-~/.agents/skills/remote-runtime/scripts/rr init --non-interactive \
+bash ~/.agents/skills/remote-runtime/scripts/rr doctor
+bash ~/.agents/skills/remote-runtime/scripts/rr init --non-interactive \
   --service-name myapp \
   --deploy-method jar-systemd \
   --cloud-alias jdcloud \
   --lan-alias intranet \
   --health-url http://127.0.0.1:8080/actuator/health \
   --workdir /opt/apps/myapp
-~/.agents/skills/remote-runtime/scripts/rr validate
-~/.agents/skills/remote-runtime/scripts/rr health env:test --dry-run
+bash ~/.agents/skills/remote-runtime/scripts/rr validate
+bash ~/.agents/skills/remote-runtime/scripts/rr health env:test --dry-run
 ```
 
 ## 适用场景
