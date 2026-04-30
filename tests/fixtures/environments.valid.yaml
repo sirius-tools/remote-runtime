@@ -1,0 +1,4 @@
+environments:
+  test:
+    protected: false
+    hosts: [cloud-jd-bj-app-01]

@@ -1,0 +1,11 @@
+hosts:
+  cloud-jd-bj-app-01:
+    ssh_alias: jdcloud
+    role: app
+    type: cloud
+    provider: jd
+    location: bj
+    labels: [java]
+    vars:
+      workdir: /opt/apps/myapp
+      health_url: http://127.0.0.1:8080/actuator/health

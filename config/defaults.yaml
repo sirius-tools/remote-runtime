@@ -1,0 +1,5 @@
+defaults:
+  service_name: myapp
+  keep_releases: 5
+  artifact_dir: target
+  artifact_pattern: "*.jar"

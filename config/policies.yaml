@@ -1,0 +1,42 @@
+policies:
+  ssh:
+    forbid_raw_ip: true
+    require_ssh_alias: true
+    forbid_password_auth_hint: true
+
+  output:
+    mask_secrets: true
+    mask_ip: true
+    mask_env_values: [PASSWORD, TOKEN, SECRET, ACCESS_KEY, PRIVATE_KEY]
+
+  commands:
+    dangerous_patterns:
+      - "rm -rf /"
+      - "rm -rf /*"
+      - "mkfs"
+      - "dd if="
+      - ":(){:|:&};:"
+      - "shutdown"
+      - "reboot"
+      - "iptables -F"
+      - "ufw disable"
+    require_confirm_actions: [deploy, rollback, exec, cleanup, restart, sync]
+
+  deploy:
+    require_health_check: true
+    collect_logs_on_failure: true
+    auto_rollback: false
+    require_clean_git_worktree: false
+    require_tests_before_deploy: true
+
+  environments:
+    protected: [prod, staging]
+
+  audit:
+    enabled: true
+    log_dir: ~/.remote-runtime/audit
+
+  lock:
+    enabled: true
+    lock_dir: ~/.remote-runtime/locks
+    ttl_seconds: 1800

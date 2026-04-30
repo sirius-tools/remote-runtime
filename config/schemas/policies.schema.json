@@ -1,0 +1,1 @@
+{"type":"object","required":["policies"],"properties":{"policies":{"type":"object"}},"additionalProperties":true}

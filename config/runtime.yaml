@@ -1,0 +1,25 @@
+runtime:
+  default_parallel: false
+  default_timeout_seconds: 600
+  default_health_retries: 5
+  default_health_interval_seconds: 3
+  default_log_tail: 200
+  report_dir: ~/.remote-runtime/reports
+
+  build:
+    java:
+      detect: [pom.xml, build.gradle]
+      commands:
+        maven: "./mvnw clean package -DskipTests=false || mvn clean package -DskipTests=false"
+        gradle: "./gradlew clean build || gradle clean build"
+
+  deploy_methods:
+    jar-systemd:
+      restart_command: "sudo systemctl restart {{service_name}}"
+      status_command: "systemctl status {{service_name}} --no-pager"
+      logs_command: "journalctl -u {{service_name}} -n {{tail}} --no-pager"
+
+    docker-compose:
+      restart_command: "cd {{workdir}}/current && docker compose up -d"
+      status_command: "cd {{workdir}}/current && docker compose ps"
+      logs_command: "cd {{workdir}}/current && docker compose logs --tail {{tail}}"

@@ -1,0 +1,38 @@
+environments:
+  dev:
+    description: 开发远程环境
+    protected: false
+    strategy: serial
+    hosts: [lan-office-local-app-01]
+    vars:
+      spring_profile: dev
+
+  test:
+    description: 测试环境
+    protected: false
+    strategy: serial
+    hosts: [cloud-jd-bj-app-01]
+    vars:
+      spring_profile: test
+
+  staging:
+    description: 预发布环境
+    protected: true
+    strategy: serial
+    hosts: []
+    vars:
+      spring_profile: staging
+
+  prod:
+    description: 生产环境
+    protected: true
+    strategy: rolling
+    hosts: []
+    vars:
+      spring_profile: prod
+
+  all:
+    description: 所有远程环境
+    protected: false
+    strategy: serial
+    hosts: [lan-office-local-app-01, cloud-jd-bj-app-01]

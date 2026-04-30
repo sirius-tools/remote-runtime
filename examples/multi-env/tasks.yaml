@@ -1,0 +1,25 @@
+tasks:
+  deploy:
+    description: Build, upload, switch release, restart, and health check.
+    risk: high
+    steps: [build, package, backup, upload, switch_release, restart, health, report]
+
+  diagnose:
+    description: Diagnose remote runtime.
+    risk: low
+    steps: [status, metrics, port-check, health, logs]
+
+  smoke:
+    description: Run smoke tests.
+    risk: low
+    steps: [health, smoke-test]
+
+  safe-restart:
+    description: Restart service and verify health.
+    risk: medium
+    steps: [status, restart, health]
+
+  rollback:
+    description: Rollback to previous release and verify health.
+    risk: high
+    steps: [rollback, health, report]

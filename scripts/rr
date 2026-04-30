@@ -1,0 +1,266 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_PATH="$0"
+if command -v realpath >/dev/null 2>&1; then
+  SCRIPT_PATH="$(realpath "$SCRIPT_PATH")"
+elif command -v readlink >/dev/null 2>&1; then
+  RESOLVED="$(readlink "$SCRIPT_PATH" 2>/dev/null || true)"
+  if [[ -n "$RESOLVED" ]]; then
+    [[ "$RESOLVED" = /* ]] && SCRIPT_PATH="$RESOLVED" || SCRIPT_PATH="$(cd "$(dirname "$SCRIPT_PATH")" && cd "$(dirname "$RESOLVED")" && pwd)/$(basename "$RESOLVED")"
+  fi
+fi
+ROOT="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
+source "$ROOT/scripts/lib/common.sh"
+source "$ROOT/scripts/lib/config.sh"
+source "$ROOT/scripts/lib/validate.sh"
+source "$ROOT/scripts/lib/selector.sh"
+source "$ROOT/scripts/lib/policy.sh"
+source "$ROOT/scripts/lib/target.sh"
+source "$ROOT/scripts/lib/report.sh"
+source "$ROOT/scripts/lib/audit.sh"
+source "$ROOT/scripts/lib/lock.sh"
+source "$ROOT/scripts/actions/health.sh"
+source "$ROOT/scripts/actions/deploy.sh"
+source "$ROOT/scripts/actions/logs.sh"
+source "$ROOT/scripts/actions/status.sh"
+source "$ROOT/scripts/actions/metrics.sh"
+source "$ROOT/scripts/actions/sync.sh"
+source "$ROOT/scripts/actions/restart.sh"
+source "$ROOT/scripts/actions/rollback.sh"
+source "$ROOT/scripts/actions/diagnose.sh"
+source "$ROOT/scripts/actions/exec.sh"
+source "$ROOT/scripts/actions/compare.sh"
+source "$ROOT/scripts/actions/port-check.sh"
+source "$ROOT/scripts/actions/smoke-test.sh"
+source "$ROOT/scripts/actions/build.sh"
+source "$ROOT/scripts/actions/package.sh"
+source "$ROOT/scripts/actions/backup.sh"
+source "$ROOT/scripts/actions/upload.sh"
+source "$ROOT/scripts/actions/switch_release.sh"
+
+DRY_RUN=false
+YES=false
+VERBOSE=false
+JSON=false
+PARALLEL=false
+SERIAL=false
+LIMIT=0
+TIMEOUT=10
+TAIL=200
+FOLLOW=false
+NO_COLOR=false
+REPORT=false
+
+usage() {
+  cat <<U
+rr help
+rr version
+rr init
+rr doctor
+rr validate
+rr plan <action> <target>
+rr list
+rr list hosts|envs|tasks|labels
+rr health <target>
+rr deploy <target>
+rr logs <target>
+rr status <target>
+rr restart <target>
+rr metrics <target>
+rr sync <target>
+rr rollback <target>
+rr diagnose <target>
+rr exec <target> "<command>"
+rr run <task> <target>
+rr compare <target-a> <target-b>
+rr lock list
+rr lock clear <target>
+U
+}
+
+parse_flags() {
+  local rest=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dry-run) DRY_RUN=true ;;
+      --yes) YES=true ;;
+      --verbose) VERBOSE=true ;;
+      --json) JSON=true ;;
+      --parallel) PARALLEL=true ;;
+      --serial) SERIAL=true ;;
+      --limit) LIMIT="$2"; shift ;;
+      --timeout) TIMEOUT="$2"; shift ;;
+      --tail) TAIL="$2"; shift ;;
+      --follow) FOLLOW=true ;;
+      --no-color) NO_COLOR=true ;;
+      --report) REPORT=true ;;
+      *) rest+=("$1") ;;
+    esac
+    shift
+  done
+  set -- "${rest[@]}"
+  CMD_ARGS=("$@")
+}
+
+doctor() {
+  local ok=true
+  for c in yq ssh scp rsync curl bash; do
+    command -v "$c" >/dev/null 2>&1 || { echo "missing: $c"; ok=false; }
+  done
+  build_compiled_configs >/dev/null || ok=false
+  yq eval '.hosts | keys | length' "$CFG_DIR/inventory.yaml" >/dev/null 2>&1 || ok=false
+  yq eval '.environments | keys | length' "$CFG_DIR/environments.yaml" >/dev/null 2>&1 || ok=false
+  yq eval '.policies | keys | length' "$CFG_DIR/policies.yaml" >/dev/null 2>&1 || ok=false
+  while IFS= read -r h; do
+    [[ -z "$h" ]] && continue
+    local alias workdir health
+    alias="$(yq eval ".hosts.\"$h\".ssh_alias" "$CFG_DIR/inventory.yaml")"
+    workdir="$(yq eval ".hosts.\"$h\".vars.workdir" "$CFG_DIR/inventory.yaml")"
+    health="$(yq eval ".hosts.\"$h\".vars.health_url" "$CFG_DIR/inventory.yaml")"
+    [[ "$alias" == "null" || -z "$alias" ]] && { echo "missing ssh_alias for $h"; ok=false; }
+    [[ "$workdir" == "null" || -z "$workdir" ]] && { echo "missing workdir for $h"; ok=false; }
+    [[ "$health" == "null" || -z "$health" ]] && { echo "missing health_url for $h"; ok=false; }
+  done < <(yq eval '.hosts | keys | .[]' "$CFG_DIR/inventory.yaml")
+  $ok && echo "doctor ok" || die "doctor failed"
+}
+
+do_init() {
+  mkdir -p .remote-runtime
+  local svc="${SERVICE_NAME:-myapp}" dep="${DEPLOY_METHOD:-jar-systemd}" cloud="${CLOUD_ALIAS:-jdcloud}" lan="${LAN_ALIAS:-intranet}" health="${HEALTH_URL:-http://127.0.0.1:8080/actuator/health}" wd="${WORKDIR:-/opt/apps/myapp}"
+  cat > .remote-runtime/inventory.yaml <<Y
+hosts:
+  cloud-jd-bj-app-01:
+    type: cloud
+    provider: jd
+    location: bj
+    role: app
+    index: "01"
+    ssh_alias: $cloud
+    labels: [java, test]
+    vars:
+      service_name: $svc
+      deploy_method: $dep
+      health_url: $health
+      workdir: $wd
+  lan-office-local-app-01:
+    type: lan
+    provider: office
+    location: local
+    role: app
+    index: "01"
+    ssh_alias: $lan
+    labels: [java, test]
+    vars:
+      service_name: $svc
+      deploy_method: $dep
+      health_url: $health
+      workdir: $wd
+Y
+  cp "$ROOT/config/environments.yaml" .remote-runtime/environments.yaml
+  cp "$ROOT/config/tasks.yaml" .remote-runtime/tasks.yaml
+  cp "$ROOT/config/runtime.yaml" .remote-runtime/runtime.yaml
+  echo "initialized .remote-runtime"
+}
+
+run_task() {
+  local task="$1" target="$2"
+  build_compiled_configs >/dev/null
+  local step
+  while IFS= read -r step; do
+    [[ -z "$step" ]] && continue
+    case "$step" in
+      health) action_health "$target" "$DRY_RUN" "$JSON" "$TIMEOUT" ;;
+      status) action_status "$target" "$DRY_RUN" ;;
+      metrics) action_metrics "$target" "$DRY_RUN" ;;
+      logs) action_logs "$target" "$DRY_RUN" "$TAIL" "$FOLLOW" ;;
+      restart) action_restart "$target" "$DRY_RUN" ;;
+      rollback) action_rollback "$target" "$DRY_RUN" ;;
+      report) [[ "$REPORT" == "true" ]] && write_report "$task" "$target" "task done" >/dev/null || true ;;
+      smoke-test) action_smoke_test "$target" "$DRY_RUN" ;;
+      port-check) action_port_check "$target" "$DRY_RUN" ;;
+      build) action_build "$target" "$DRY_RUN" ;;
+      package) action_package "$target" "$DRY_RUN" ;;
+      backup) action_backup "$target" "$DRY_RUN" ;;
+      upload) action_upload "$target" "$DRY_RUN" ;;
+      switch_release) action_switch_release "$target" "$DRY_RUN" ;;
+      *) echo "skip unknown step: $step" ;;
+    esac
+  done < <(yq eval ".tasks.\"$task\".steps[]" "$CFG_DIR/tasks.yaml" 2>/dev/null || true)
+}
+
+parse_flags "$@"
+set -- "${CMD_ARGS[@]}"
+
+cmd="${1:-help}"
+case "$cmd" in
+  help) usage ;;
+  version) cat "$ROOT/VERSION" ;;
+  doctor) doctor ;;
+  validate) validate_configs ;;
+  init)
+    shift
+    if [[ "${1:-}" == "--non-interactive" ]]; then
+      shift
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --service-name) SERVICE_NAME="$2"; shift ;;
+          --deploy-method) DEPLOY_METHOD="$2"; shift ;;
+          --cloud-alias) CLOUD_ALIAS="$2"; shift ;;
+          --lan-alias) LAN_ALIAS="$2"; shift ;;
+          --health-url) HEALTH_URL="$2"; shift ;;
+          --workdir) WORKDIR="$2"; shift ;;
+        esac
+        shift
+      done
+      do_init
+    else
+      read -r -p "service_name [myapp]: " SERVICE_NAME; SERVICE_NAME="${SERVICE_NAME:-myapp}"
+      read -r -p "deploy_method [jar-systemd]: " DEPLOY_METHOD; DEPLOY_METHOD="${DEPLOY_METHOD:-jar-systemd}"
+      read -r -p "cloud_alias [jdcloud]: " CLOUD_ALIAS; CLOUD_ALIAS="${CLOUD_ALIAS:-jdcloud}"
+      read -r -p "lan_alias [intranet]: " LAN_ALIAS; LAN_ALIAS="${LAN_ALIAS:-intranet}"
+      read -r -p "health_url [http://127.0.0.1:8080/actuator/health]: " HEALTH_URL; HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8080/actuator/health}"
+      read -r -p "workdir [/opt/apps/myapp]: " WORKDIR; WORKDIR="${WORKDIR:-/opt/apps/myapp}"
+      do_init
+    fi
+    ;;
+  list)
+    build_compiled_configs >/dev/null
+    sub="${2:-hosts}"
+    case "$sub" in
+      hosts) yq eval '.hosts | keys | .[]' "$CFG_DIR/inventory.yaml" ;;
+      envs) yq eval '.environments | keys | .[]' "$CFG_DIR/environments.yaml" ;;
+      tasks) yq eval '.tasks | keys | .[]' "$CFG_DIR/tasks.yaml" ;;
+      labels) yq eval '.hosts[].labels[]' "$CFG_DIR/inventory.yaml" | sort -u ;;
+      *) die "unknown list subcommand" ;;
+    esac
+    ;;
+  plan)
+    action="${2:-}"; target="${3:-}"
+    [[ -z "$action" || -z "$target" ]] && die "usage: rr plan <action> <target>"
+    echo "plan action=$action target=$target dry_run=$DRY_RUN"
+    echo "1) resolve target"
+    echo "2) check policy"
+    echo "3) execute action"
+    ;;
+  health) action_health "${2:-}" "$DRY_RUN" "$JSON" "$TIMEOUT" ;;
+  deploy) action_deploy "${2:-}" "$DRY_RUN" ;;
+  logs) action_logs "${2:-}" "$DRY_RUN" "$TAIL" "$FOLLOW" ;;
+  status) action_status "${2:-}" "$DRY_RUN" ;;
+  restart) action_restart "${2:-}" "$DRY_RUN" ;;
+  metrics) action_metrics "${2:-}" "$DRY_RUN" ;;
+  sync) action_sync "${2:-}" "$DRY_RUN" ;;
+  rollback) action_rollback "${2:-}" "$DRY_RUN" ;;
+  diagnose) action_diagnose "${2:-}" "$DRY_RUN" ;;
+  exec) action_exec "${2:-}" "$DRY_RUN" "${3:-}" ;;
+  run) run_task "${2:-}" "${3:-}" ;;
+  compare) action_compare "${2:-}" "${3:-}" "$DRY_RUN" ;;
+  lock)
+    case "${2:-}" in
+      list) lock_list ;;
+      clear) lock_clear "${3:-}" ;;
+      *) die "usage: rr lock list|clear <target>" ;;
+    esac
+    ;;
+  *) usage; exit 1 ;;
+esac

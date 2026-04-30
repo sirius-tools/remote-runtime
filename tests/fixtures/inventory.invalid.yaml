@@ -1,0 +1,4 @@
+hosts:
+  bad-host:
+    ip: 1.2.3.4
+    ssh_alias: bad

@@ -1,0 +1,43 @@
+hosts:
+  cloud-jd-bj-app-01:
+    type: cloud
+    provider: jd
+    location: bj
+    role: app
+    index: "01"
+    ssh_alias: jdcloud
+    description: 京东云应用测试服务器
+    labels: [java, docker, springboot, test]
+    vars:
+      workdir: /opt/apps/myapp
+      service_name: myapp
+      deploy_method: docker-compose
+      health_url: http://127.0.0.1:8080/actuator/health
+      artifact_dir: target
+      artifact_pattern: "*.jar"
+      keep_releases: 5
+      remote_user: ""
+      release_root: /opt/apps/myapp/releases
+      shared_dir: /opt/apps/myapp/shared
+      logs_dir: /opt/apps/myapp/logs
+
+  lan-office-local-app-01:
+    type: lan
+    provider: office
+    location: local
+    role: app
+    index: "01"
+    ssh_alias: intranet
+    description: 内网应用测试服务器
+    labels: [java, systemd, springboot, test]
+    vars:
+      workdir: /opt/apps/myapp
+      service_name: myapp
+      deploy_method: jar-systemd
+      health_url: http://127.0.0.1:8080/actuator/health
+      artifact_dir: target
+      artifact_pattern: "*.jar"
+      keep_releases: 5
+      release_root: /opt/apps/myapp/releases
+      shared_dir: /opt/apps/myapp/shared
+      logs_dir: /opt/apps/myapp/logs

@@ -1,0 +1,3 @@
+display_name: Remote Runtime
+short_description: Safe multi-environment remote runtime orchestration over SSH aliases.
+default_prompt: Deploy, inspect, diagnose, and operate remote runtime workflows with policy checks and dry-run support.
