@@ -59,6 +59,14 @@ rr version
 rr init
 rr doctor
 rr validate
+rr host plan-add --env <env> --name <host> --ssh-alias <alias> --host <address> --user <user>
+rr host add --env <env> --name <host> --ssh-alias <alias> --host <address> --user <user>
+rr host list
+rr host validate <host>
+rr host remove <host>
+rr env attach <env> <host>
+rr ssh doctor <host>
+rr ssh bootstrap <host>
 rr plan <action> <target>
 rr list
 rr list hosts|envs|tasks|labels
@@ -77,6 +85,216 @@ rr compare <target-a> <target-b>
 rr lock list
 rr lock clear <target>
 U
+}
+
+ensure_project_config() {
+  mkdir -p .remote-runtime
+  [[ -f .remote-runtime/inventory.yaml ]] || cp "$ROOT/config/inventory.yaml" .remote-runtime/inventory.yaml
+  [[ -f .remote-runtime/environments.yaml ]] || cp "$ROOT/config/environments.yaml" .remote-runtime/environments.yaml
+  [[ -f .remote-runtime/tasks.yaml ]] || cp "$ROOT/config/tasks.yaml" .remote-runtime/tasks.yaml
+  [[ -f .remote-runtime/runtime.yaml ]] || cp "$ROOT/config/runtime.yaml" .remote-runtime/runtime.yaml
+}
+
+ensure_ssh_include() {
+  local ssh_dir="${RR_SSH_CONFIG_DIR:-$HOME/.ssh/config.d}"
+  local ssh_config="${RR_SSH_CONFIG_FILE:-$HOME/.ssh/config}"
+  mkdir -p "$ssh_dir"
+  touch "$ssh_config"
+  if ! grep -Fq 'Include ~/.ssh/config.d/*.conf' "$ssh_config"; then
+    printf '\nInclude ~/.ssh/config.d/*.conf\n' >> "$ssh_config"
+  fi
+}
+
+parse_host_add_args() {
+  HOST_ENV=""
+  HOST_NAME=""
+  HOST_ALIAS=""
+  HOST_ADDRESS=""
+  HOST_USER=""
+  HOST_TYPE="lan"
+  HOST_PROVIDER="home"
+  HOST_LOCATION="local"
+  HOST_ROLE="test"
+  HOST_INDEX="01"
+  HOST_SERVICE_NAME="myapp"
+  HOST_DEPLOY_METHOD="jar-systemd"
+  HOST_WORKDIR="/opt/apps/myapp"
+  HOST_HEALTH_URL="http://127.0.0.1:8080/actuator/health"
+  HOST_LABELS="test,onboarded"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --env) HOST_ENV="$2"; shift ;;
+      --name) HOST_NAME="$2"; shift ;;
+      --ssh-alias) HOST_ALIAS="$2"; shift ;;
+      --host) HOST_ADDRESS="$2"; shift ;;
+      --user) HOST_USER="$2"; shift ;;
+      --type) HOST_TYPE="$2"; shift ;;
+      --provider) HOST_PROVIDER="$2"; shift ;;
+      --location) HOST_LOCATION="$2"; shift ;;
+      --role) HOST_ROLE="$2"; shift ;;
+      --index) HOST_INDEX="$2"; shift ;;
+      --service-name) HOST_SERVICE_NAME="$2"; shift ;;
+      --deploy-method) HOST_DEPLOY_METHOD="$2"; shift ;;
+      --workdir) HOST_WORKDIR="$2"; shift ;;
+      --health-url) HOST_HEALTH_URL="$2"; shift ;;
+      --labels) HOST_LABELS="$2"; shift ;;
+      *) die "unknown host add option: $1" ;;
+    esac
+    shift
+  done
+
+  [[ -z "$HOST_ENV" ]] && die "missing --env"
+  [[ -z "$HOST_NAME" ]] && die "missing --name"
+  [[ -z "$HOST_ALIAS" ]] && die "missing --ssh-alias"
+  [[ -z "$HOST_ADDRESS" ]] && die "missing --host"
+  [[ -z "$HOST_USER" ]] && die "missing --user"
+  if [[ "$HOST_ALIAS" =~ [[:space:]] ]]; then
+    die "ssh alias must not contain spaces"
+  fi
+}
+
+print_host_plan() {
+  echo "host add plan"
+  echo "  env: $HOST_ENV"
+  echo "  name: $HOST_NAME"
+  echo "  ssh_alias: $HOST_ALIAS"
+  echo "  address: $HOST_ADDRESS"
+  echo "  user: $HOST_USER"
+  echo "  role: $HOST_ROLE"
+  echo "  provider: $HOST_PROVIDER"
+  echo "  location: $HOST_LOCATION"
+  echo "  inventory: .remote-runtime/inventory.yaml"
+  echo "  environments: .remote-runtime/environments.yaml"
+  echo "  ssh_config: ~/.ssh/config.d/remote-runtime.conf"
+  echo "  secrets: passwords are never stored"
+}
+
+write_host_config() {
+  require_cmd yq
+  ensure_project_config
+  yq eval -i ".hosts.\"$HOST_NAME\" = {
+    \"type\": \"$HOST_TYPE\",
+    \"provider\": \"$HOST_PROVIDER\",
+    \"location\": \"$HOST_LOCATION\",
+    \"role\": \"$HOST_ROLE\",
+    \"index\": \"$HOST_INDEX\",
+    \"ssh_alias\": \"$HOST_ALIAS\",
+    \"description\": \"Onboarded host\",
+    \"labels\": (\"$HOST_LABELS\" | split(\",\")),
+    \"vars\": {
+      \"service_name\": \"$HOST_SERVICE_NAME\",
+      \"deploy_method\": \"$HOST_DEPLOY_METHOD\",
+      \"health_url\": \"$HOST_HEALTH_URL\",
+      \"workdir\": \"$HOST_WORKDIR\"
+    }
+  }" .remote-runtime/inventory.yaml
+  attach_env_host "$HOST_ENV" "$HOST_NAME"
+}
+
+write_ssh_config() {
+  ensure_ssh_include
+  local ssh_dir="${RR_SSH_CONFIG_DIR:-$HOME/.ssh/config.d}"
+  local rr_ssh_config="$ssh_dir/remote-runtime.conf"
+  touch "$rr_ssh_config"
+  if grep -Eq "^[[:space:]]*Host[[:space:]]+${HOST_ALIAS}\$" "$rr_ssh_config"; then
+    echo "ssh alias already exists: $HOST_ALIAS"
+    return 0
+  fi
+  {
+    printf '\nHost %s\n' "$HOST_ALIAS"
+    printf '  HostName %s\n' "$HOST_ADDRESS"
+    printf '  User %s\n' "$HOST_USER"
+    printf '  Port 22\n'
+  } >> "$rr_ssh_config"
+}
+
+attach_env_host() {
+  local env="$1" host="$2"
+  ensure_project_config
+  if ! yq eval -e ".environments.\"$env\"" .remote-runtime/environments.yaml >/dev/null 2>&1; then
+    yq eval -i ".environments.\"$env\" = {\"description\":\"Auto-created environment\",\"protected\":false,\"strategy\":\"serial\",\"hosts\":[],\"vars\":{}}" .remote-runtime/environments.yaml
+  fi
+  yq eval -i ".environments.\"$env\".hosts += [\"$host\"] | .environments.\"$env\".hosts |= unique" .remote-runtime/environments.yaml
+}
+
+host_command() {
+  local sub="${1:-}"; shift || true
+  case "$sub" in
+    plan-add)
+      parse_host_add_args "$@"
+      print_host_plan
+      ;;
+    add)
+      parse_host_add_args "$@"
+      write_host_config
+      write_ssh_config
+      echo "host added: $HOST_NAME"
+      echo "ssh alias: $HOST_ALIAS"
+      ;;
+    list)
+      build_compiled_configs >/dev/null
+      yq eval '.hosts | keys | .[]' "$CFG_DIR/inventory.yaml"
+      ;;
+    validate)
+      local host="${1:-}"
+      [[ -z "$host" ]] && die "usage: rr host validate <host>"
+      build_compiled_configs >/dev/null
+      yq eval -e ".hosts.\"$host\"" "$CFG_DIR/inventory.yaml" >/dev/null || die "unknown host: $host"
+      local alias
+      alias="$(yq eval ".hosts.\"$host\".ssh_alias" "$CFG_DIR/inventory.yaml")"
+      [[ "$alias" == "null" || -z "$alias" ]] && die "missing ssh_alias for $host"
+      echo "host valid: $host"
+      ;;
+    remove)
+      local host="${1:-}"
+      [[ -z "$host" ]] && die "usage: rr host remove <host>"
+      ensure_project_config
+      yq eval -i "del(.hosts.\"$host\")" .remote-runtime/inventory.yaml
+      yq eval -i "(.environments[]?.hosts // []) |= map(select(. != \"$host\"))" .remote-runtime/environments.yaml
+      echo "host removed from project config: $host"
+      ;;
+    *) die "usage: rr host plan-add|add|list|validate|remove" ;;
+  esac
+}
+
+env_command() {
+  local sub="${1:-}"; shift || true
+  case "$sub" in
+    attach)
+      [[ $# -ne 2 ]] && die "usage: rr env attach <env> <host>"
+      attach_env_host "$1" "$2"
+      echo "attached $2 to env:$1"
+      ;;
+    *) die "usage: rr env attach <env> <host>" ;;
+  esac
+}
+
+ssh_command() {
+  local sub="${1:-}"; shift || true
+  case "$sub" in
+    doctor)
+      local host="${1:-}"
+      [[ -z "$host" ]] && die "usage: rr ssh doctor <host>"
+      build_compiled_configs >/dev/null
+      local alias
+      alias="$(yq eval ".hosts.\"$host\".ssh_alias" "$CFG_DIR/inventory.yaml")"
+      [[ "$alias" == "null" || -z "$alias" ]] && die "missing ssh_alias for $host"
+      ssh -G "$alias" >/dev/null 2>&1 && echo "ssh alias resolvable: $alias" || die "ssh alias not resolvable: $alias"
+      ;;
+    bootstrap)
+      local host="${1:-}"
+      [[ -z "$host" ]] && die "usage: rr ssh bootstrap <host>"
+      build_compiled_configs >/dev/null
+      local alias key
+      alias="$(yq eval ".hosts.\"$host\".ssh_alias" "$CFG_DIR/inventory.yaml")"
+      key="$HOME/.ssh/remote-runtime_${host}"
+      [[ -f "$key" ]] || ssh-keygen -t ed25519 -f "$key" -N ""
+      echo "public key: ${key}.pub"
+      echo "run: ssh-copy-id -i ${key}.pub ${alias}"
+      ;;
+    *) die "usage: rr ssh doctor|bootstrap <host>" ;;
+  esac
 }
 
 parse_flags() {
@@ -223,6 +441,18 @@ case "$cmd" in
       read -r -p "workdir [/opt/apps/myapp]: " WORKDIR; WORKDIR="${WORKDIR:-/opt/apps/myapp}"
       do_init
     fi
+    ;;
+  host)
+    shift
+    host_command "$@"
+    ;;
+  env)
+    shift
+    env_command "$@"
+    ;;
+  ssh)
+    shift
+    ssh_command "$@"
     ;;
   list)
     build_compiled_configs >/dev/null

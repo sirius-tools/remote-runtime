@@ -54,10 +54,14 @@ bash ~/.agents/skills/remote-runtime/scripts/rr health env:test --dry-run
 rr list hosts
 rr list envs
 rr list tasks
+rr host plan-add --env test --name lan-home-local-test-01 --ssh-alias lan-home-local-test-01 --host 192.0.2.151 --user appuser
+rr host add --env test --name lan-home-local-test-01 --ssh-alias lan-home-local-test-01 --host 192.0.2.151 --user appuser
 rr plan deploy env:test
 rr status env:all --dry-run
 rr run diagnose env:all --dry-run
 ```
+
+自然语言接入服务器时，由 Codex 从用户描述中提取环境、主机用途、SSH 用户和地址，然后调用结构化的 `rr host plan-add` / `rr host add`。`rr` 不解析自然语言，也不会保存密码。
 
 ## 安全边界
 - 仅允许 SSH alias，不允许裸 IP
