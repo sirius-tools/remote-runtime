@@ -21,19 +21,21 @@ npx @smithery/cli@latest skill add sirius-tools/remote-runtime -a codex -g
 
 - 默认安装到 `~/.agents/skills/remote-runtime`
 - 可选 `./install.sh --with-cli` 创建 `~/.local/bin/rr`
+- 安装 CLI 后可用 `rr doctor cli` 检查 `PATH`、当前 `rr` 指向的 Skill 目录，以及本机依赖工具
 
 ## 快速开始
 ```bash
-bash ~/.agents/skills/remote-runtime/scripts/rr doctor
-bash ~/.agents/skills/remote-runtime/scripts/rr init --non-interactive \
+rr doctor cli
+rr config explain
+rr init --non-interactive \
   --service-name myapp \
   --deploy-method jar-systemd \
-  --cloud-alias jdcloud \
-  --lan-alias intranet \
+  --cloud-alias <cloud-ssh-alias> \
+  --lan-alias <lan-ssh-alias> \
   --health-url http://127.0.0.1:8080/actuator/health \
   --workdir /opt/apps/myapp
-bash ~/.agents/skills/remote-runtime/scripts/rr validate
-bash ~/.agents/skills/remote-runtime/scripts/rr health env:test --dry-run
+rr validate
+rr health env:test --dry-run
 ```
 
 ## 适用场景
@@ -55,14 +57,17 @@ bash ~/.agents/skills/remote-runtime/scripts/rr health env:test --dry-run
 rr list hosts
 rr list envs
 rr list tasks
-rr host plan-add --env test --name lan-home-local-test-01 --ssh-alias lan-home-local-test-01 --host 192.0.2.151 --user appuser
-rr host add --env test --name lan-home-local-test-01 --ssh-alias lan-home-local-test-01 --host 192.0.2.151 --user appuser
+rr config explain
+rr host plan-add --scope project --env test --name lan-home-local-test-01 --ssh-alias lan-home-local-test-01 --host <private-host-or-ip> --user <ssh-user>
+rr host onboard-plan --env test --address <private-host-or-ip> --user <ssh-user> --role app --scope project
+rr demo docker plan lan-home-local-app-01
+rr port find lan-home-local-app-01 --from 18080 --to 18100 --dry-run
 rr plan deploy env:test
 rr status env:all --dry-run
 rr run diagnose env:all --dry-run
 ```
 
-自然语言接入服务器时，由 Codex 从用户描述中提取环境、主机用途、SSH 用户和地址，然后调用结构化的 `rr host plan-add` / `rr host add`。`rr` 不解析自然语言，也不会保存密码。
+自然语言接入服务器时，由 Codex 从用户描述中提取环境、主机用途、SSH 用户和地址，然后优先调用结构化的 `rr host onboard-plan` / `rr host onboard-apply`。`rr` 不解析自然语言，也不会保存密码。
 
 ## Codex 使用场景示例
 
@@ -86,32 +91,46 @@ rr status env:all --dry-run
 ### 2. 用自然语言添加本地测试服务器
 你可以直接对 Codex 说：
 
-> IP：192.0.2.151 user：appuser password：示例密码，帮我配置成本地测试环境。
+> 地址：<private-host-or-ip> user：<ssh-user> password：我会手动输入，帮我配置成本地测试环境。
 
 Codex 应按这个流程处理：
 ```bash
-rr host plan-add \
+rr host onboard-plan \
   --env test \
-  --name lan-local-test-01 \
-  --ssh-alias lan-local-test-01 \
-  --host 192.0.2.151 \
-  --user appuser
+  --address <private-host-or-ip> \
+  --user <ssh-user> \
+  --provider home \
+  --location local \
+  --role app \
+  --scope project
 ```
 
 确认计划后再执行：
 ```bash
-rr host add \
-  --env test \
-  --name lan-local-test-01 \
-  --ssh-alias lan-local-test-01 \
-  --host 192.0.2.151 \
-  --user appuser
+rr host onboard-apply --yes --from-plan ~/.remote-runtime/plans/onboard-<generated-host>.yaml
 ```
 
 重要边界：
 - 密码只用于当前终端内的 SSH 首次引导或用户手动配置，不写入仓库、不写入 Skill 配置。
-- Skill 配置只保存 `ssh_alias`、环境、角色、健康检查 URL、部署目录等非敏感运行时元数据。
+- Skill inventory 只保存 `ssh_alias`、环境、角色、健康检查 URL、部署目录等非敏感运行时元数据。
+- 地址只写入本机 `~/.ssh/config.d/remote-runtime.conf`，不写入 remote-runtime inventory。
 - 真实 IP、账号等如果属于私有资产，应放在本地 ignored overlay，不提交到公开仓库。
+
+### 2.1 看懂配置写到了哪里
+你可以说：
+
+> 解释一下 remote-runtime 现在会读写哪些配置文件。
+
+Codex 应执行：
+```bash
+rr config explain
+```
+
+如果添加主机，应优先展示 scope：
+```bash
+rr host plan-add --scope project --env test --name <host-name> --ssh-alias <ssh-alias> --host <private-host-or-ip> --user <ssh-user>
+rr host plan-add --scope user --env test --name <host-name> --ssh-alias <ssh-alias> --host <private-host-or-ip> --user <ssh-user>
+```
 
 ### 3. 配置后检查服务器是否可用
 你可以说：
@@ -188,6 +207,33 @@ rr rollback env:test --yes
 ```
 
 回滚使用远程 `current` / `previous` release 指针，不在本机解析远程路径。
+
+### 8. 部署 Docker 示例程序
+你可以说：
+
+> 在这台测试服务器上部署一个 Docker 示例服务，先给计划。
+
+Codex 应执行：
+```bash
+rr demo docker plan lan-home-local-app-01
+```
+
+确认后执行：
+```bash
+rr demo docker deploy lan-home-local-app-01 --port auto --yes
+rr demo docker status lan-home-local-app-01
+rr demo docker health lan-home-local-app-01
+```
+
+清理示例：
+```bash
+rr demo docker cleanup lan-home-local-app-01 --yes
+```
+
+端口冲突时先查找可用端口：
+```bash
+rr port find lan-home-local-app-01 --from 18080 --to 18100
+```
 
 ## 这个设想能否实现
 可以实现，但合理边界是：

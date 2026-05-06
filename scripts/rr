@@ -62,9 +62,13 @@ rr help
 rr version
 rr init
 rr doctor
+rr doctor cli
 rr validate
-rr host plan-add --env <env> --name <host> --ssh-alias <alias> --host <address> --user <user>
-rr host add --env <env> --name <host> --ssh-alias <alias> --host <address> --user <user>
+rr config explain
+rr host plan-add --scope project|user --env <env> --name <host> --ssh-alias <alias> --host <address> --user <user>
+rr host add --scope project|user --env <env> --name <host> --ssh-alias <alias> --host <address> --user <user>
+rr host onboard-plan --env <env> --address <address> --user <user> --role <role> --scope project|user
+rr host onboard-apply --yes --from-plan <plan-file>
 rr host list
 rr host validate <host>
 rr host remove <host>
@@ -84,6 +88,12 @@ rr sync <target>
 rr cleanup <target>
 rr backup <target>
 rr port-check <target>
+rr port find <target> --from 18080 --to 18100
+rr demo docker plan <target>
+rr demo docker deploy <target> --yes
+rr demo docker status <target>
+rr demo docker health <target>
+rr demo docker cleanup <target> --yes
 rr db-check <target>
 rr smoke-test <target>
 rr rollback <target>
@@ -104,6 +114,31 @@ ensure_project_config() {
   [[ -f .remote-runtime/runtime.yaml ]] || cp "$ROOT/config/runtime.yaml" .remote-runtime/runtime.yaml
 }
 
+ensure_user_config() {
+  mkdir -p "$RR_USER_CFG_DIR"
+  [[ -f "$RR_USER_CFG_DIR/inventory.yaml" ]] || cp "$ROOT/config/inventory.yaml" "$RR_USER_CFG_DIR/inventory.yaml"
+  [[ -f "$RR_USER_CFG_DIR/environments.yaml" ]] || cp "$ROOT/config/environments.yaml" "$RR_USER_CFG_DIR/environments.yaml"
+  [[ -f "$RR_USER_CFG_DIR/tasks.yaml" ]] || cp "$ROOT/config/tasks.yaml" "$RR_USER_CFG_DIR/tasks.yaml"
+  [[ -f "$RR_USER_CFG_DIR/runtime.yaml" ]] || cp "$ROOT/config/runtime.yaml" "$RR_USER_CFG_DIR/runtime.yaml"
+}
+
+scope_paths() {
+  local scope="$1"
+  case "$scope" in
+    project) printf '%s\n%s\n' "$RR_PROJECT_DIR/inventory.yaml" "$RR_PROJECT_DIR/environments.yaml" ;;
+    user) printf '%s\n%s\n' "$RR_USER_CFG_DIR/inventory.yaml" "$RR_USER_CFG_DIR/environments.yaml" ;;
+    *) die "scope must be project or user" ;;
+  esac
+}
+
+ensure_scope_config() {
+  case "$1" in
+    project) ensure_project_config ;;
+    user) ensure_user_config ;;
+    *) die "scope must be project or user" ;;
+  esac
+}
+
 ensure_ssh_include() {
   local ssh_dir="${RR_SSH_CONFIG_DIR:-$HOME/.ssh/config.d}"
   local ssh_config="${RR_SSH_CONFIG_FILE:-$HOME/.ssh/config}"
@@ -115,6 +150,7 @@ ensure_ssh_include() {
 }
 
 parse_host_add_args() {
+  HOST_SCOPE="project"
   HOST_ENV=""
   HOST_NAME=""
   HOST_ALIAS=""
@@ -134,6 +170,7 @@ parse_host_add_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --env) HOST_ENV="$2"; shift ;;
+      --scope) HOST_SCOPE="$2"; shift ;;
       --name) HOST_NAME="$2"; shift ;;
       --ssh-alias) HOST_ALIAS="$2"; shift ;;
       --host) HOST_ADDRESS="$2"; shift ;;
@@ -158,13 +195,18 @@ parse_host_add_args() {
   [[ -z "$HOST_ALIAS" ]] && die "missing --ssh-alias"
   [[ -z "$HOST_ADDRESS" ]] && die "missing --host"
   [[ -z "$HOST_USER" ]] && die "missing --user"
+  [[ "$HOST_SCOPE" != "project" && "$HOST_SCOPE" != "user" ]] && die "scope must be project or user"
   if [[ "$HOST_ALIAS" =~ [[:space:]] ]]; then
     die "ssh alias must not contain spaces"
   fi
 }
 
 print_host_plan() {
+  local inv envs
+  inv="$(scope_paths "$HOST_SCOPE" | sed -n '1p')"
+  envs="$(scope_paths "$HOST_SCOPE" | sed -n '2p')"
   echo "host add plan"
+  echo "  scope: $HOST_SCOPE"
   echo "  env: $HOST_ENV"
   echo "  name: $HOST_NAME"
   echo "  ssh_alias: $HOST_ALIAS"
@@ -173,15 +215,18 @@ print_host_plan() {
   echo "  role: $HOST_ROLE"
   echo "  provider: $HOST_PROVIDER"
   echo "  location: $HOST_LOCATION"
-  echo "  inventory: .remote-runtime/inventory.yaml"
-  echo "  environments: .remote-runtime/environments.yaml"
+  echo "  inventory: $inv"
+  echo "  environments: $envs"
   echo "  ssh_config: ~/.ssh/config.d/remote-runtime.conf"
   echo "  secrets: passwords are never stored"
 }
 
 write_host_config() {
   require_cmd yq
-  ensure_project_config
+  local inv envs
+  ensure_scope_config "$HOST_SCOPE"
+  inv="$(scope_paths "$HOST_SCOPE" | sed -n '1p')"
+  envs="$(scope_paths "$HOST_SCOPE" | sed -n '2p')"
   yq eval -i ".hosts.\"$HOST_NAME\" = {
     \"type\": \"$HOST_TYPE\",
     \"provider\": \"$HOST_PROVIDER\",
@@ -197,8 +242,8 @@ write_host_config() {
       \"health_url\": \"$HOST_HEALTH_URL\",
       \"workdir\": \"$HOST_WORKDIR\"
     }
-  }" .remote-runtime/inventory.yaml
-  attach_env_host "$HOST_ENV" "$HOST_NAME"
+  }" "$inv"
+  attach_env_host "$HOST_ENV" "$HOST_NAME" "$HOST_SCOPE"
 }
 
 write_ssh_config() {
@@ -219,12 +264,122 @@ write_ssh_config() {
 }
 
 attach_env_host() {
-  local env="$1" host="$2"
-  ensure_project_config
-  if ! yq eval -e ".environments.\"$env\"" .remote-runtime/environments.yaml >/dev/null 2>&1; then
-    yq eval -i ".environments.\"$env\" = {\"description\":\"Auto-created environment\",\"protected\":false,\"strategy\":\"serial\",\"hosts\":[],\"vars\":{}}" .remote-runtime/environments.yaml
+  local env="$1" host="$2" scope="${3:-project}" inv envs
+  ensure_scope_config "$scope"
+  inv="$(scope_paths "$scope" | sed -n '1p')"
+  envs="$(scope_paths "$scope" | sed -n '2p')"
+  if ! yq eval -e ".environments.\"$env\"" "$envs" >/dev/null 2>&1; then
+    yq eval -i ".environments.\"$env\" = {\"description\":\"Auto-created environment\",\"protected\":false,\"strategy\":\"serial\",\"hosts\":[],\"vars\":{}}" "$envs"
   fi
-  yq eval -i ".environments.\"$env\".hosts += [\"$host\"] | .environments.\"$env\".hosts |= unique" .remote-runtime/environments.yaml
+  yq eval -i ".environments.\"$env\".hosts += [\"$host\"] | .environments.\"$env\".hosts |= unique" "$envs"
+}
+
+slugify() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//'
+}
+
+parse_onboard_args() {
+  HOST_ENV=""
+  HOST_ADDRESS=""
+  HOST_USER=""
+  HOST_PROVIDER="local"
+  HOST_LOCATION="local"
+  HOST_ROLE="app"
+  HOST_SCOPE="project"
+  HOST_INDEX="01"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --env) HOST_ENV="$2"; shift ;;
+      --address) HOST_ADDRESS="$2"; shift ;;
+      --user) HOST_USER="$2"; shift ;;
+      --provider) HOST_PROVIDER="$(slugify "$2")"; shift ;;
+      --location) HOST_LOCATION="$(slugify "$2")"; shift ;;
+      --role) HOST_ROLE="$(slugify "$2")"; shift ;;
+      --scope) HOST_SCOPE="$2"; shift ;;
+      --index) HOST_INDEX="$2"; shift ;;
+      *) die "unknown onboard option: $1" ;;
+    esac
+    shift
+  done
+  [[ -z "$HOST_ENV" ]] && die "missing --env"
+  [[ -z "$HOST_ADDRESS" ]] && die "missing --address"
+  [[ -z "$HOST_USER" ]] && die "missing --user"
+  [[ "$HOST_SCOPE" != "project" && "$HOST_SCOPE" != "user" ]] && die "scope must be project or user"
+  HOST_TYPE="lan"
+  HOST_NAME="lan-${HOST_PROVIDER}-${HOST_LOCATION}-${HOST_ROLE}-${HOST_INDEX}"
+  HOST_ALIAS="$HOST_NAME"
+}
+
+write_onboard_plan() {
+  require_cmd yq
+  parse_onboard_args "$@"
+  mkdir -p "$RR_HOME/plans"
+  local plan_file="$RR_HOME/plans/onboard-${HOST_NAME}.yaml"
+  cat > "$plan_file" <<Y
+scope: "$HOST_SCOPE"
+env: "$HOST_ENV"
+name: "$HOST_NAME"
+ssh_alias: "$HOST_ALIAS"
+address: "$HOST_ADDRESS"
+user: "$HOST_USER"
+type: "$HOST_TYPE"
+provider: "$HOST_PROVIDER"
+location: "$HOST_LOCATION"
+role: "$HOST_ROLE"
+index: "$HOST_INDEX"
+Y
+  echo "host onboard plan"
+  echo "  scope: $HOST_SCOPE"
+  echo "  env: $HOST_ENV"
+  echo "  name: $HOST_NAME"
+  echo "  ssh_alias: $HOST_ALIAS"
+  echo "  address: $HOST_ADDRESS"
+  echo "  user: $HOST_USER"
+  echo "  plan_file: $plan_file"
+  echo "  ssh_config: ~/.ssh/config.d/remote-runtime.conf"
+  echo "  inventory stores ssh_alias only"
+  echo "  address is written only to local SSH config"
+  echo "  passwords are never stored"
+  echo "  apply validates: rr validate; rr host validate $HOST_NAME; rr ssh doctor $HOST_NAME"
+}
+
+apply_onboard_plan() {
+  require_cmd yq
+  local plan_file="" confirm=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --from-plan) plan_file="$2"; shift ;;
+      --yes) confirm=true ;;
+      *) die "unknown onboard apply option: $1" ;;
+    esac
+    shift
+  done
+  [[ "$YES" == "true" ]] && confirm=true
+  [[ "$confirm" != "true" ]] && die "rr host onboard-apply requires --yes"
+  [[ -z "$plan_file" ]] && die "missing --from-plan"
+  [[ -f "$plan_file" ]] || die "plan file not found: $plan_file"
+  HOST_SCOPE="$(yq eval '.scope' "$plan_file")"
+  HOST_ENV="$(yq eval '.env' "$plan_file")"
+  HOST_NAME="$(yq eval '.name' "$plan_file")"
+  HOST_ALIAS="$(yq eval '.ssh_alias' "$plan_file")"
+  HOST_ADDRESS="$(yq eval '.address' "$plan_file")"
+  HOST_USER="$(yq eval '.user' "$plan_file")"
+  HOST_TYPE="$(yq eval '.type' "$plan_file")"
+  HOST_PROVIDER="$(yq eval '.provider' "$plan_file")"
+  HOST_LOCATION="$(yq eval '.location' "$plan_file")"
+  HOST_ROLE="$(yq eval '.role' "$plan_file")"
+  HOST_INDEX="$(yq eval '.index' "$plan_file")"
+  HOST_SERVICE_NAME="myapp"
+  HOST_DEPLOY_METHOD="jar-systemd"
+  HOST_WORKDIR="/opt/apps/myapp"
+  HOST_HEALTH_URL="http://127.0.0.1:8080/actuator/health"
+  HOST_LABELS="test,onboarded"
+  write_host_config
+  write_ssh_config
+  echo "host onboarded: $HOST_NAME"
+  validate_configs
+  host_command validate "$HOST_NAME"
+  ssh_command doctor "$HOST_NAME"
 }
 
 host_command() {
@@ -240,6 +395,12 @@ host_command() {
       write_ssh_config
       echo "host added: $HOST_NAME"
       echo "ssh alias: $HOST_ALIAS"
+      ;;
+    onboard-plan)
+      write_onboard_plan "$@"
+      ;;
+    onboard-apply)
+      apply_onboard_plan "$@"
       ;;
     list)
       build_compiled_configs >/dev/null
@@ -263,7 +424,7 @@ host_command() {
       yq eval -i "(.environments[]?.hosts // []) |= map(select(. != \"$host\"))" .remote-runtime/environments.yaml
       echo "host removed from project config: $host"
       ;;
-    *) die "usage: rr host plan-add|add|list|validate|remove" ;;
+    *) die "usage: rr host plan-add|add|onboard-plan|onboard-apply|list|validate|remove" ;;
   esac
 }
 
@@ -304,6 +465,175 @@ ssh_command() {
       ;;
     *) die "usage: rr ssh doctor|bootstrap <host>" ;;
   esac
+}
+
+config_command() {
+  local sub="${1:-}"; shift || true
+  case "$sub" in
+    explain)
+      echo "remote-runtime config explain"
+      echo "  skill defaults: $ROOT/config"
+      echo "  project config: $RR_PROJECT_DIR"
+      echo "  user overlays: $RR_USER_CFG_DIR"
+      echo "  compiled cache: $CFG_DIR"
+      echo "  read order:"
+      echo "    1) $ROOT/config"
+      echo "    2) $RR_PROJECT_DIR"
+      echo "    3) $RR_USER_CFG_DIR"
+      echo "  write defaults:"
+      echo "    rr host add --scope project -> $RR_PROJECT_DIR/inventory.yaml and environments.yaml"
+      echo "    rr host add --scope user -> $RR_USER_CFG_DIR/inventory.yaml and environments.yaml"
+      echo "    ssh connection details -> ~/.ssh/config.d/remote-runtime.conf"
+      ;;
+    *) die "usage: rr config explain" ;;
+  esac
+}
+
+doctor_cli() {
+  local rr_path="" current=""
+  rr_path="$(command -v rr 2>/dev/null || true)"
+  current="$SCRIPT_PATH"
+  echo "rr executable: ${rr_path:-not found in PATH}"
+  echo "current script: $current"
+  echo "skill root: $ROOT"
+  if [[ -z "$rr_path" ]]; then
+    echo "PATH status: ~/.local/bin/rr is not directly executable from PATH"
+    echo "fix: run ./install.sh --with-cli and add ~/.local/bin to PATH"
+  else
+    echo "PATH status: ok"
+  fi
+  for c in bash ssh rsync curl yq docker; do
+    if command -v "$c" >/dev/null 2>&1; then
+      echo "tool $c: $(command -v "$c")"
+    else
+      echo "tool $c: missing"
+    fi
+  done
+}
+
+parse_demo_docker_args() {
+  DEMO_NAME="rr-demo-nginx"
+  DEMO_PORT="auto"
+  DEMO_WORKDIR="~/rr-demo"
+  DEMO_IMAGE="nginx:alpine"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --name) DEMO_NAME="$2"; shift ;;
+      --port) DEMO_PORT="$2"; shift ;;
+      --workdir) DEMO_WORKDIR="$2"; shift ;;
+      --image) DEMO_IMAGE="$2"; shift ;;
+      *) die "unknown docker demo option: $1" ;;
+    esac
+    shift
+  done
+}
+
+demo_docker_command_string() {
+  local mode="$1" port="$2"
+  case "$mode" in
+    deploy)
+      printf 'mkdir -p %q && cd %q && cat > docker-compose.yml <<'"'"'YAML'"'"'\nservices:\n  app:\n    image: %s\n    container_name: %s\n    ports:\n      - "127.0.0.1:%s:80"\n    restart: unless-stopped\nYAML\ndocker compose up -d' "$DEMO_WORKDIR" "$DEMO_WORKDIR" "$DEMO_IMAGE" "$DEMO_NAME" "$port"
+      ;;
+    status)
+      printf 'cd %q && docker compose ps && docker inspect --format="{{.State.Status}}" %q' "$DEMO_WORKDIR" "$DEMO_NAME"
+      ;;
+    health)
+      printf 'curl -fsS http://127.0.0.1:%s/' "$port"
+      ;;
+    cleanup)
+      printf 'cd %q && docker compose down --remove-orphans && docker rm -f %q 2>/dev/null || true' "$DEMO_WORKDIR" "$DEMO_NAME"
+      ;;
+  esac
+}
+
+demo_docker() {
+  local sub="${1:-}" target="${2:-}"
+  [[ -z "$sub" || -z "$target" ]] && die "usage: rr demo docker plan|deploy|status|health|cleanup <target>"
+  shift 2
+  parse_demo_docker_args "$@"
+  build_compiled_configs >/dev/null
+  local port="$DEMO_PORT"
+  [[ "$port" == "auto" ]] && port="38180"
+  case "$sub" in
+    plan)
+      echo "docker demo plan"
+      echo "  target: $target"
+      echo "  name: $DEMO_NAME"
+      echo "  image: $DEMO_IMAGE"
+      echo "  workdir: $DEMO_WORKDIR"
+      echo "  port: $DEMO_PORT"
+      echo "  deploy: rr demo docker deploy $target --port $DEMO_PORT --yes"
+      echo "  status: rr demo docker status $target --port $port"
+      echo "  health: rr demo docker health $target --port $port"
+      echo "  cleanup: rr demo docker cleanup $target --yes"
+      ;;
+    deploy|cleanup)
+      [[ "$YES" != "true" ]] && die "rr demo docker $sub requires --yes"
+      local hosts h cmd
+      if [[ "$sub" == "deploy" && "$DEMO_PORT" == "auto" && "$DRY_RUN" != "true" ]]; then
+        local first_host find_cmd
+        first_host="$(resolve_or_fail "$target" | sed -n '1p')"
+        find_cmd='for p in $(seq 38180 38200); do (ss -lnt 2>/dev/null || netstat -lnt 2>/dev/null) | grep -q ":$p " || { echo $p; exit 0; }; done; exit 1'
+        port="$(ssh_exec "$first_host" "$find_cmd" false | tail -n 1 | mask_output)"
+        [[ -z "$port" ]] && die "no free demo port found in range 38180-38200"
+      fi
+      hosts="$(resolve_or_fail "$target")"
+      cmd="$(demo_docker_command_string "$sub" "$port")"
+      while IFS= read -r h; do
+        [[ -z "$h" ]] && continue
+        ssh_exec "$h" "$cmd" "$DRY_RUN" | mask_output
+      done <<< "$hosts"
+      echo "docker demo report"
+      echo "  container_name: $DEMO_NAME"
+      echo "  compose_project_dir: $DEMO_WORKDIR"
+      echo "  selected_port: $port"
+      echo "  status_command: rr demo docker status $target --port $port"
+      echo "  health_command: rr demo docker health $target --port $port"
+      echo "  cleanup_command: rr demo docker cleanup $target --yes"
+      ;;
+    status|health)
+      local hosts h cmd
+      hosts="$(resolve_or_fail "$target")"
+      cmd="$(demo_docker_command_string "$sub" "$port")"
+      while IFS= read -r h; do
+        [[ -z "$h" ]] && continue
+        ssh_exec "$h" "$cmd" "$DRY_RUN" | mask_output
+      done <<< "$hosts"
+      ;;
+    *) die "usage: rr demo docker plan|deploy|status|health|cleanup <target>" ;;
+  esac
+}
+
+port_command() {
+  local sub="${1:-}" target="${2:-}"
+  [[ "$sub" != "find" || -z "$target" ]] && die "usage: rr port find <target> --from 18080 --to 18100"
+  shift 2
+  local from=18080 to=18100
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --from) from="$2"; shift ;;
+      --to) to="$2"; shift ;;
+      *) die "unknown port find option: $1" ;;
+    esac
+    shift
+  done
+  build_compiled_configs >/dev/null
+  local hosts h cmd first=true
+  hosts="$(resolve_or_fail "$target")"
+  cmd="for p in \$(seq $from $to); do (ss -lnt 2>/dev/null || netstat -lnt 2>/dev/null) | grep -q \":\$p \" || { echo \$p; exit 0; }; done; exit 1"
+  while IFS= read -r h; do
+    [[ -z "$h" ]] && continue
+    if [[ "$DRY_RUN" == "true" ]]; then
+      ssh_exec "$h" "$cmd" true | mask_output
+      $first && echo "suggested_port: $from"
+    else
+      local found
+      found="$(ssh_exec "$h" "$cmd" false | tail -n 1 | mask_output)"
+      [[ -z "$found" ]] && die "no free port found in range $from-$to"
+      echo "suggested_port: $found"
+    fi
+    first=false
+  done <<< "$hosts"
 }
 
 parse_flags() {
@@ -499,7 +829,17 @@ cmd="${1:-help}"
 case "$cmd" in
   help) usage ;;
   version) cat "$ROOT/VERSION" ;;
-  doctor) doctor ;;
+  doctor)
+    if [[ "${2:-}" == "cli" ]]; then
+      doctor_cli
+    else
+      doctor
+    fi
+    ;;
+  config)
+    shift
+    config_command "$@"
+    ;;
   validate) validate_configs ;;
   init)
     shift
@@ -545,6 +885,16 @@ case "$cmd" in
   ssh)
     shift
     ssh_command "$@"
+    ;;
+  demo)
+    shift
+    [[ "${1:-}" == "docker" ]] || die "usage: rr demo docker plan|deploy|status|health|cleanup <target>"
+    shift
+    demo_docker "$@"
+    ;;
+  port)
+    shift
+    port_command "$@"
     ;;
   list)
     build_compiled_configs >/dev/null

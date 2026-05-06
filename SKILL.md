@@ -21,6 +21,13 @@ Use this skill when the user asks to:
 
 Always use the `rr` command as the single entry point.
 
+If `rr` is not directly available, first run or suggest `./install.sh --with-cli`, then verify with:
+
+```bash
+rr doctor cli
+rr version
+```
+
 Before executing:
 
 1. Read relevant config.
@@ -44,12 +51,21 @@ Codex workflow:
 Natural language server onboarding:
 
 1. Use Codex reasoning to extract the user's intent and fields.
-2. Convert the request into structured `rr host plan-add` and `rr host add` commands.
+2. Convert the request into structured `rr host onboard-plan` and `rr host onboard-apply` commands.
 3. Never pass raw natural language to `rr`.
 4. Never store passwords, tokens, or private keys.
 5. If the user provides a password, state that it will not be saved and use terminal SSH key bootstrap instead.
 6. Write server connection details only to local SSH config, and write remote-runtime inventory with `ssh_alias` only.
+7. Use `rr config explain` when the user asks where resources are stored or when scope is ambiguous.
 For details, read `references/onboarding-hosts.md`.
+
+Docker demo workflow:
+
+1. Start with `rr demo docker plan <target>`.
+2. For real changes, require confirmation and run `rr demo docker deploy <target> --yes`.
+3. Verify with `rr demo docker status <target>` and `rr demo docker health <target>`.
+4. Clean up with `rr demo docker cleanup <target> --yes`.
+5. If ports conflict, use `rr port find <target> --from <port> --to <port>`.
 
 Never expose:
 

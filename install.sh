@@ -34,14 +34,20 @@ find "$TARGET_SKILL_DIR/scripts/actions" -name '*.sh' -exec chmod +x {} \;
 if [[ "$WITH_CLI" == "true" ]]; then
   mkdir -p "$HOME/.local/bin"
   ln -sf "$TARGET_SKILL_DIR/scripts/rr" "$HOME/.local/bin/rr"
+  if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+    echo "warning: ~/.local/bin/rr was linked, but ~/.local/bin is not in PATH"
+    echo "add this to your shell profile if needed:"
+    echo '  export PATH="$HOME/.local/bin:$PATH"'
+  fi
 fi
 
 echo "skill installed to: $TARGET_SKILL_DIR"
 echo "next:"
 echo "  1) Restart or refresh Codex session so skill discovery reloads."
 if [[ "$WITH_CLI" == "true" ]]; then
-  echo "  2) rr doctor"
-  echo "  3) rr init"
+  echo "  2) rr doctor cli"
+  echo "  3) rr doctor"
+  echo "  4) rr init"
 else
   echo "  2) Optional CLI link: ./install.sh --with-cli"
   echo "  3) Or run directly: $TARGET_SKILL_DIR/scripts/rr doctor"

@@ -6,15 +6,16 @@ Use Codex reasoning for natural language. Use `rr` only for structured execution
 
 1. Extract intent, environment, address, SSH user, role, provider, location, and service hints.
 2. Generate a host name with `<scope>-<provider>-<location>-<role>-<index>`.
-3. Run `rr host plan-add` and show the plan.
-4. Run `rr host add` only after the user confirms or explicitly asks to proceed.
-5. Run `rr host validate <host>` and `rr ssh doctor <host>`.
+3. Run `rr config explain` if scope is unclear.
+4. Run `rr host onboard-plan` and show the plan.
+5. Run `rr host onboard-apply --yes --from-plan <plan-file>` only after the user confirms or explicitly asks to proceed.
+6. Let apply run `rr validate`, `rr host validate <host>`, and `rr ssh doctor <host>`.
 
 ## Commands
 
 ```bash
-bash ~/.agents/skills/remote-runtime/scripts/rr host plan-add --env test --name lan-home-local-test-01 --ssh-alias lan-home-local-test-01 --host 192.0.2.151 --user appuser --role test --provider home --location local
-bash ~/.agents/skills/remote-runtime/scripts/rr host add --env test --name lan-home-local-test-01 --ssh-alias lan-home-local-test-01 --host 192.0.2.151 --user appuser --role test --provider home --location local
+rr host onboard-plan --env test --address <private-host-or-ip> --user <ssh-user> --role app --provider home --location local --scope project
+rr host onboard-apply --yes --from-plan ~/.remote-runtime/plans/onboard-<generated-host>.yaml
 ```
 
 ## Security
